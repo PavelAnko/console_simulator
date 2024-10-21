@@ -1,0 +1,8 @@
+{
+    "files.associations": {
+        "*.embeddedhtml": "html",
+        "serial_port.h": "c",
+        "kernel.h": "c",
+        "keyboard.h": "c"
+    }
+}

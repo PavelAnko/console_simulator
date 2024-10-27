@@ -2,16 +2,12 @@
 #include "../drivers/keyboard/keyboard.h"
 #include "../drivers/timer/timer.h"
 #include "../drivers/serial_port/serial_port.h"
+#include "../utils/utils.h"
 
 #define VIDEO_MEMORY 0xB8000
 #define VGA_WIDTH 80
 #define MAX_ROWS 25
 #define MAX_COLS 80
-
-extern char *framebuffer;
-// int command_count = sizeof(commands) / sizeof(commands[0]);
-extern short cursor_pointer;
-extern short TIMER_TICKES;
 
 #define BLACK_COLOR 0x0
 #define GREEN_COLOR 0xa
@@ -19,19 +15,10 @@ extern short TIMER_TICKES;
 #define RED_COLOR 0xc
 #define WHITE_COLOR 0xf
 #define PINK_COLOR 0xd
+#define LIGHT_GREEN_COLOR 0xa 
 unsigned char cnsl_state_clrs[25 * 80];
 
-char *cmnds_names[] = {
-    "help",
-    "clear",
-    "sleep",
-    "list",
-    // "create",
-    // "edit",
-    // "read",
-    // "delete",
-    // "flip"
-};
+static unsigned long next = 1;
 
 void print_char(int row, int col, char c) {
     unsigned short position = (row * VGA_WIDTH + col) * 2;
@@ -39,16 +26,6 @@ void print_char(int row, int col, char c) {
     video[position] = c;
     video[position + 1] = 0x0A; 
 }
-
-// void move_to_new_line(unsigned short *current_row, unsigned short *current_col, unsigned short max_rows, bool *NEW_LINE) {
-//     (*current_row)++;  // Збільшуємо номер рядка
-//     *current_col = 0;  // Скидаємо номер стовпця на 0
-
-//     if (*current_row >= max_rows) {
-//         *current_row = max_rows - 1; // Обмежуємо рядок, якщо досягнуто межі
-//         // *NEW_LINE = false;
-//     }
-// }
 
 void new_line_handle(unsigned short *current_row, unsigned short *current_col, bool *NEW_LINE) {
     if (NEW_LINE) {
@@ -60,7 +37,7 @@ void new_line_handle(unsigned short *current_row, unsigned short *current_col, b
 }
 
 void clean_screen(){
-        char *framebuff = (char *)0xb8000;
+    char *framebuff = (char *)0xb8000;
     for (int i = 0; i < MAX_ROWS * MAX_COLS * 2; i += 2) {
         framebuff[i] = ' ';
         framebuff[i + 1] = 0x07;
@@ -72,9 +49,7 @@ void print(char *msg, unsigned char clr_bckg, unsigned char clr_fnt)
     while (*msg != '\0')
     {
         if (*msg == '\n')
-        {
             cursor_pointer += 80 - cursor_pointer % 80;
-        }
         else
         {
             *(framebuffer + cursor_pointer * 2) = *msg;
@@ -83,14 +58,10 @@ void print(char *msg, unsigned char clr_bckg, unsigned char clr_fnt)
         }
         msg++;
         
-        if (cursor_pointer > 1999)
-        {
-            scroll();
-        }
+        if (cursor_pointer > 1999)  
+            scroll(); 
         else
-        {
             put_cursor(cursor_pointer);
-        }
     }
 }
 
@@ -118,62 +89,85 @@ void scroll()
     put_cursor(cursor_pointer);
 }
 
-void cmnd_clear()
-{
-    clean_screen();
-    cursor_pointer = 0;
-    char *ver_msg = "ChristOS - v 0.0.1\n";
-    print(ver_msg, BLACK_COLOR, GREEN_COLOR);
+int rand() {
+    next = next * 1103515245 + 12345;  // Лінійний конгруентний генератор
+    return (unsigned int)(next / 65536) % 32768;  // Повертаємо значення в діапазоні [0, 32767]
 }
 
-void cmnd_help()
+void recover_console_state()
 {
-    char *new_line = "\n";
-    print(new_line, BLACK_COLOR, BLACK_COLOR);
-    
-    char *msg_help = "\t   ======== Welcome to the system! ========\n\t   == You can use the following commands ==\n\t   help - show help message\n\t   clear - clean shell\n\t   sleep - screensave mode on\n\t   list - show tree of files\n\t   create - create new file\n\t   edit - edit the file\n\t   read - show file content\n\t   delete - delete file\n";
-    print(msg_help, BLACK_COLOR, YELLOW_COLOR);
-}
+    unsigned short anim_offsite_X = 0;
+    unsigned short anim_offsite_Y = 0;
+    unsigned short anim_coord_X = 1;
+    unsigned short anim_coord_Y = 1;
 
-void cmnd_sleep()
-{
-    TIMER_TICKES = 200;
-    timer_tick_handler();
-}
+    cursor_pointer = cnsl_state_pntr;
 
-char search_command(unsigned short *position_text)
-{
-    unsigned short cmnds_nums = sizeof(cmnds_names) / sizeof(cmnds_names[0]);   // обчислюємо кількість елементів (команд) у масиві
-    for (unsigned short cmnd_indx = 0; cmnd_indx < cmnds_nums; cmnd_indx++)     // перевірте кожну команду
+    cnsl_state_pntr = 0;
+
+    put_cursor(cursor_pointer);
+
+    for (unsigned char row = 0; row < 25; row++)
     {
-        unsigned short pntr = *position_text;
-        bool same = true;           
-        unsigned short cmnd_chrs_shift = 0;
-        while(*(cmnds_names[cmnd_indx] + cmnd_chrs_shift) != '\0' && pntr < cursor_pointer && same)
+        for (unsigned char col = 0; col < 80; col++)
         {
-            if (*(cmnds_names[cmnd_indx] + cmnd_chrs_shift) != *(framebuffer + pntr * 2))
-            {
-                same = false;  // якщо не збіглися символи з команди та з веденого рядка (наприклад "l" != "k")
-            }
-            
-            cmnd_chrs_shift++;  // якщо перший симвло p vfcbde = "l" і другий сивмол з веденого текту = "l" то цикл продовжує порівнення
-            pntr++;
-        }
+            *(framebuffer + row * (80 * 2) + col * (2)) = cnsl_state_chrs[row * 80 + col];
+            cnsl_state_chrs[row * 80 + col] = BLACK_COLOR;
 
-        if (same)
-        {
-            if (*(cmnds_names[cmnd_indx] + cmnd_chrs_shift) != '\0')
-            {
-                // частина назви команди збігається, але не вся назва
-            }
-            else if(pntr == cursor_pointer || framebuffer[pntr * 2] == ' ')
-            {
-                *position_text = pntr;
-                return cmnd_indx;
-            }
+            *(framebuffer + row * (80 * 2) + col * (2) + 1) = cnsl_state_clrs[row * 80 + col];
+            cnsl_state_clrs[row * 80 + col] = BLACK_COLOR;
         }
     }
+}
 
-    return -1;
-};
+void save_console_txt(){
+    if (!STARTED) {
+        // Зберігаємо вміст екрану
+        for (int i = 0; i < MAX_ROWS * MAX_COLS * 2; i += 2) {
+            SAVE[i] = framebuff[i];       // Збереження символу
+            SAVE[i + 1] = framebuff[i + 1]; // Збереження кольору символу
+            framebuff[i] = ' ';            // Очищення екрана
+            framebuff[i + 1] = 0x07;       // Білий текст на чорному фоні
+        }
 
+        put_cursor(-1);  // Приховуємо курсор
+        STARTED = true;  // Переходимо в режим анімації
+    }
+}
+
+void start_animation(){
+    static int columns[MAX_COLS]; // Позиція "крапель" у кожній колонці
+    static int init = 0;
+
+    // Ініціалізуємо колонки, якщо це перший кадр
+    if (!init) {
+        for (int i = 0; i < MAX_COLS; i++) {
+            columns[i] = rand() % MAX_ROWS;  // Випадковий рядок для кожної колонки
+        }
+        init = 1;
+    }
+
+    // Оновлюємо екран
+    char digits[] = "0123456789";
+    int colors[] = {GREEN_COLOR, LIGHT_GREEN_COLOR};  // Кольори для "цифрового дощу"
+
+    for (int col = 0; col < MAX_COLS; col++) {
+        int row = columns[col];
+
+        // Очищуємо попередній символ у цій колонці
+        if (row > 0) {
+            *(framebuff + ((row - 1) * MAX_COLS + col) * 2) = ' ';
+            *(framebuff + ((row - 1) * MAX_COLS + col) * 2 + 1) = 0x07;
+        }
+
+        // Виводимо нову цифру
+        char digit = digits[rand() % 10];
+        int color = colors[rand() % 2];
+
+        *(framebuff + (row * MAX_COLS + col) * 2) = digit;
+        *(framebuff + (row * MAX_COLS + col) * 2 + 1) = color;
+
+        // Зсуваємо "краплю" вниз
+        columns[col] = (row + 1) % MAX_ROWS;
+    }
+}
